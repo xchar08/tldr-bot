@@ -1,0 +1,41 @@
+{
+  "name": "tldr-bot",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc && tsc-alias",
+    "start": "node dist/index.js",
+    "build:watch": "tsc --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "tldr",
+    "ai",
+    "nebius"
+  ],
+  "author": "phoen",
+  "license": "ISC",
+  "description": "Discord bot that summarizes tagged user's last 20min messages using Nebius AI",
+  "type": "commonjs",
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^17.2.3",
+    "openai": "^4.52.7",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.3",
+    "nodemon": "^3.1.4",
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.16",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "npm@10.0.0"
+}
