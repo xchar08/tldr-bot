@@ -1,4 +1,3 @@
-// src/index.ts - FULL WORKING VERSION (backwards compatible)
 import {
   Client,
   GatewayIntentBits,
@@ -6,6 +5,9 @@ import {
   Routes,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
+  ContextMenuCommandBuilder,      // <--- ADDED
+  ApplicationCommandType,         // <--- ADDED
+  MessageContextMenuCommandInteraction, // <--- ADDED
   User,
 } from 'discord.js';
 import dotenv from 'dotenv';
@@ -43,9 +45,9 @@ const client = new Client({
   ],
 });
 
-// ✅ ADDED NEW COMMANDS (chat, def, ping)
+// ✅ REGISTER ALL 6 COMMANDS (5 Slash + 1 Context Menu)
 const commands = [
-  // Original commands (unchanged)
+  // 1. Original tldr command
   new SlashCommandBuilder()
     .setName('tldr')
     .setDescription("Summarize tagged user's messages from last 20 minutes")
@@ -53,6 +55,7 @@ const commands = [
       option.setName('user').setDescription('User to summarize').setRequired(true)
     ),
     
+  // 2. Original tldrmsg command
   new SlashCommandBuilder()
     .setName('tldrmsg')
     .setDescription("Summarize tagged user's last X messages")
@@ -67,7 +70,7 @@ const commands = [
         .setRequired(false)
     ),
 
-  // ✅ NEW COMMANDS
+  // 3. Chat command
   new SlashCommandBuilder()
     .setName('chat')
     .setDescription('Chat with AI about anything')
@@ -78,19 +81,26 @@ const commands = [
         .setMaxLength(2000)
     ),
 
+  // 4. Define command
   new SlashCommandBuilder()
     .setName('def')
     .setDescription('Get AI-powered definition of a term')
     .addStringOption((option) =>
       option.setName('term')
-        .setDescription('Term or concept to def')
+        .setDescription('Term or concept to define')
         .setRequired(true)
         .setMaxLength(500)
     ),
 
+  // 5. Ping command
   new SlashCommandBuilder()
     .setName('ping')
     .setDescription('Check bot latency and status'),
+
+  // 6. NEW: Context Menu (Summarize Link)
+  new ContextMenuCommandBuilder()
+    .setName('Summarize Link')
+    .setType(ApplicationCommandType.Message),
 
 ].map((command) => command.toJSON());
 
@@ -99,16 +109,57 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user?.tag}`);
   try {
+    // This registers the commands immediately when the bot starts
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log('✅ Slash commands registered (/tldr, /tldrmsg, /chat, /def, /ping)!');
+    console.log('✅ All commands registered (Slash + Context Menu)!');
   } catch (error) {
-    console.error('❌ Slash command registration failed:', error);
+    console.error('❌ Command registration failed:', error);
   }
 });
 
 const cooldowns = new Map<string, number>();
 
 client.on('interactionCreate', async (interaction) => {
+  
+  // ------------------------------------------------------------------
+  // 1. HANDLE CONTEXT MENUS (Right Click)
+  // ------------------------------------------------------------------
+  if (interaction.isMessageContextMenuCommand()) {
+    const int = interaction as MessageContextMenuCommandInteraction;
+
+    if (int.commandName === 'Summarize Link') {
+      await int.deferReply({ ephemeral: true }); // Only you see the summary
+      try {
+        const targetMessage = int.targetMessage;
+        const content = targetMessage.content;
+        
+        // Extract URL using regex
+        const urlMatch = content.match(/https?:\/\/[^\s]+/);
+        if (!urlMatch) {
+          await int.editReply('❌ No link found in this message.');
+          return;
+        }
+
+        const url = urlMatch[0];
+        console.log(`🔗 Summarizing Link: ${url}`);
+
+        // Call AI Service (using 'any' cast in case interface isn't updated yet)
+        const summary = (aiService as any).summarizeLink 
+          ? await (aiService as any).summarizeLink(url) 
+          : "⚠️ `summarizeLink` function missing in ai.ts";
+
+        await int.editReply(`**🔗 Link Summary:**\n${summary}`);
+      } catch (error) {
+        console.error('❌ Link Summary Error:', error);
+        await int.editReply('⚠️ Failed to summarize link.');
+      }
+    }
+    return; // Stop here for context menus
+  }
+
+  // ------------------------------------------------------------------
+  // 2. HANDLE SLASH COMMANDS
+  // ------------------------------------------------------------------
   if (!interaction.isChatInputCommand()) return;
 
   const int = interaction as ChatInputCommandInteraction;
@@ -116,7 +167,7 @@ client.on('interactionCreate', async (interaction) => {
   const now = Date.now();
   const lastUsed = cooldowns.get(channelId) || 0;
 
-  // ✅ Ping skips cooldown
+  // Global Cooldown (except ping)
   if (int.commandName !== 'ping' && now - lastUsed < 30000) {
     return int.reply({ content: '⏳ Bot on cooldown (30s). Try again soon!', ephemeral: true });
   }
@@ -125,7 +176,9 @@ client.on('interactionCreate', async (interaction) => {
     cooldowns.set(channelId, now);
   }
 
-  // ✅ NEW PING COMMAND (no cooldown)
+  // --- SLASH COMMAND HANDLERS ---
+
+  // PING
   if (int.commandName === 'ping') {
     const sent = await int.reply({ 
       content: '🏓 Pinging...', 
@@ -143,17 +196,16 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // ✅ NEW CHAT COMMAND
+  // CHAT
   if (int.commandName === 'chat') {
     await int.deferReply();
     try {
       const message = int.options.getString('message', true);
       console.log(`💬 Chat: ${message.substring(0, 50)}...`);
       
-      // SAFE: Won't error even if aiService.chat doesn't exist
       const response = (aiService as any).chat 
         ? await (aiService as any).chat(message)
-        : '❌ Chat not available - check aiService setup';
+        : '❌ Chat function not found in AiService.';
       
       await int.editReply(
         `**🤖 AI Response:**\n\`\`\`\n${response}\n\`\`\``
@@ -165,14 +217,13 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // ✅ NEW DEF COMMAND
+  // DEF
   if (int.commandName === 'def') {
     await int.deferReply();
     try {
       const term = int.options.getString('term', true);
       console.log(`📖 Def: ${term}`);
       
-      // SAFE: Won't error even if aiService.def doesn't exist  
       const definition = (aiService as any).def
         ? await (aiService as any).def(term)
         : `**📚 ${term}**\n\`\`\`Definition service not available.\n\`\`\``;
@@ -187,14 +238,19 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // ✅ ORIGINAL COMMANDS (completely unchanged)
-  const targetUser = int.options.getUser('user', true) as User;
-  if (targetUser.bot) {
+  // TLDR / TLDRMSG
+  const targetUser = int.options.getUser('user');
+  
+  if ((int.commandName === 'tldr' || int.commandName === 'tldrmsg') && !targetUser) {
+    return int.reply({ content: '❌ User argument required.', ephemeral: true });
+  }
+
+  if (targetUser?.bot) {
     return int.reply({ content: '🤖 Cannot summarize bots!', ephemeral: true });
   }
 
-  if (int.commandName === 'tldr') {
-    // ... your original tldr code unchanged
+  // TLDR (Time based)
+  if (int.commandName === 'tldr' && targetUser) {
     await int.deferReply();
     try {
       const twentyMinAgo = TwentyMinutesAgo();
@@ -227,8 +283,8 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  else if (int.commandName === 'tldrmsg') {
-    // ... your original tldrmsg code unchanged
+  // TLDRMSG (Count based)
+  else if (int.commandName === 'tldrmsg' && targetUser) {
     const count = int.options.getInteger('count') || 15;
 
     await int.deferReply();
